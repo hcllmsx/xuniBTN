@@ -1,0 +1,62 @@
+import java.time.LocalDate
+
+plugins {
+    id 'com.android.application' version '9.4.1' apply false
+}
+
+// VERSION is the only manually maintained application version.
+def versionFile = layout.projectDirectory.file('VERSION')
+def calendarVersion = versionFile.asFile.getText('UTF-8').trim()
+if (!(calendarVersion ==~ /[0-9]{2}\.(?:[1-9]|1[0-2])\.(?:[1-9]|[12][0-9]|3[01])/)) {
+    throw new GradleException('VERSION must be YY.M.D (three numeric segments, no padded month/day).')
+}
+def parts = calendarVersion.split('[.]').collect { it.toInteger() }
+try {
+    LocalDate.of(2000 + parts[0], parts[1], parts[2])
+} catch (java.time.DateTimeException ignored) {
+    throw new GradleException('VERSION must contain a valid calendar date.')
+}
+
+ext.appVersionName = calendarVersion
+ext.appVersionCode = (parts[0] * 10000 + parts[1] * 100 + parts[2]) * 10 + 9
+ext.repositoryUrl = 'https://github.com/hcllmsx/xuniBTN'
+
+allprojects {
+    version = rootProject.ext.appVersionName
+    layout.buildDirectory.set(rootProject.layout.projectDirectory.dir(
+            '_temp/build/' + (project == rootProject ? 'root' : project.path.substring(1).replace(':', '/'))))
+}
+
+def versionVerification = tasks.register('verifyVersion') {
+    group = 'verification'
+    description = 'Validate VERSION and its derived Android versionName/versionCode.'
+    inputs.file(versionFile)
+    inputs.property('expectedName', calendarVersion)
+    inputs.property('expectedCode', rootProject.ext.appVersionCode)
+    doLast {
+        def metadata = inputs.properties
+        if (metadata.versionName != metadata.expectedName || metadata.versionCode != metadata.expectedCode) {
+            throw new GradleException('Android version metadata differs from VERSION.')
+        }
+        logger.lifecycle('VERSION={} versionCode={}', metadata.versionName, metadata.versionCode)
+    }
+}
+
+gradle.projectsEvaluated {
+    def app = project(':app').extensions.getByName('android').defaultConfig
+    versionVerification.configure {
+        inputs.property('versionName', app.versionName)
+        inputs.property('versionCode', app.versionCode)
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete layout.projectDirectory.dir('_temp/build')
+}
+
+tasks.named('wrapper', Wrapper) {
+    gradleVersion = '9.8.1'
+    distributionType = Wrapper.DistributionType.BIN
+    distributionSha256Sum = 'dce76f55f8e251a3a1f130eb120f30b3d271de2b76c9b0729d316b5a1b6dc01f'
+    networkTimeout = 60000
+}

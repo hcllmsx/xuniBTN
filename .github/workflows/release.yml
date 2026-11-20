@@ -1,0 +1,172 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Validate tag and prepare release notes
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import os
+          import pathlib
+          import re
+
+          root = pathlib.Path.cwd()
+          version = (root / 'VERSION').read_text(encoding='utf-8').strip()
+          if not re.fullmatch(r'[0-9]{2}\.(?:[1-9]|1[0-2])\.(?:[1-9]|[12][0-9]|3[01])', version):
+              raise SystemExit('VERSION must be an unpadded three-segment YY.M.D date.')
+          year, month, day = map(int, version.split('.'))
+          datetime.date(2000 + year, month, day)
+          if os.environ['RELEASE_TAG'] != 'v' + version:
+              raise SystemExit('Release tag must exactly equal v + VERSION.')
+          changelog = (root / 'CHANGELOG.md').read_text(encoding='utf-8-sig')
+          headings = list(re.finditer(r'^## v' + re.escape(version) + r'\s*$', changelog, re.MULTILINE))
+          if len(headings) != 1:
+              raise SystemExit('CHANGELOG.md must contain exactly one current ## v<VERSION> heading.')
+          remainder = changelog[headings[0].end():]
+          notes = re.split(r'^## ', remainder, maxsplit=1, flags=re.MULTILINE)[0].strip()
+          if not notes:
+              raise SystemExit('The current changelog section is empty.')
+          temporary = root / '_temp'
+          temporary.mkdir(exist_ok=True)
+          body = ('### 更新内容\n\n' + notes + '\n\n---\n\n### 下载\n\n'
+                  + '请在下方 Assets 下载 `xuniBTN-v' + version + '.apk`（Android 13 及以上）。\n'
+                  + '同名 `.apk.sha256` 文件用于校验下载文件的 SHA256。\n')
+          (temporary / 'release_notes.txt').write_text(body, encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('version=' + version + '\n')
+          PY
+
+      - name: Prepare Android SDK 34
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import subprocess
+
+          sdk = pathlib.Path(os.environ.get('ANDROID_HOME') or os.environ['ANDROID_SDK_ROOT'])
+          manager = sdk / 'cmdline-tools/latest/bin/sdkmanager'
+          if not manager.is_file():
+              raise SystemExit('Android command-line tools are missing from the runner.')
+          subprocess.run([str(manager), '--licenses'], input='y\n' * 100,
+                         text=True, stdout=subprocess.DEVNULL, check=True)
+          subprocess.run([str(manager), 'platforms;android-34', 'platform-tools'], check=True)
+          # AGP installs its required Build Tools using the accepted SDK licenses.
+          PY
+
+      - name: Restore private release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          import pathlib
+
+          names = ('ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD',
+                   'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD')
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              raise SystemExit('Required repository Secrets are missing: ' + ', '.join(missing))
+          try:
+              data = base64.b64decode(''.join(os.environ['ANDROID_KEYSTORE_BASE64'].split()), validate=True)
+          except ValueError:
+              raise SystemExit('ANDROID_KEYSTORE_BASE64 is not valid base64.') from None
+          if not data:
+              raise SystemExit('The supplied release keystore is empty.')
+          directory = pathlib.Path('_temp/ci')
+          directory.mkdir(parents=True, exist_ok=True)
+          path = directory / 'release.jks'
+          with path.open('xb') as stream:
+              os.chmod(path, 0o600)
+              stream.write(data)
+          PY
+
+      - name: Test, lint and build signed release
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/_temp/ci/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          bash ./gradlew --no-daemon --console=plain verifyVersion :app:verifyReleaseSigning :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:assembleRelease
+
+      - name: Verify APK signature and SHA256
+        working-directory: out_put
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
+
+          sdk = pathlib.Path(os.environ.get('ANDROID_HOME') or os.environ['ANDROID_SDK_ROOT'])
+          tools = [p for p in sdk.glob('build-tools/*/apksigner')
+                   if re.fullmatch(r'\d+\.\d+\.\d+', p.parent.name)]
+          if not tools:
+              raise SystemExit('apksigner was not installed by the Android build.')
+          signer = max(tools, key=lambda p: tuple(map(int, p.parent.name.split('.'))))
+          apk = 'xuniBTN-v' + os.environ['RELEASE_VERSION'] + '.apk'
+          subprocess.run([str(signer), 'verify', '--verbose', '--print-certs', apk], check=True)
+          subprocess.run(['sha256sum', '--check', apk + '.sha256'], check=True)
+          PY
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: xuniBTN v${{ steps.version.outputs.version }}
+          body_path: _temp/release_notes.txt
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            out_put/xuniBTN-v${{ steps.version.outputs.version }}.apk
+            out_put/xuniBTN-v${{ steps.version.outputs.version }}.apk.sha256
+
+      - name: Remove private signing material
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          pathlib.Path('_temp/ci/release.jks').unlink(missing_ok=True)
+          PY

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">虚拟按钮</string>
+    <string name="service_description">在屏幕上显示可拖动的方向按钮，将上下左右、确定和返回按键发送给正在使用的应用。不会读取屏幕文字、截图、录音或收集操作内容。请仅在需要时开启；可随时在本应用中隐藏按钮，或在系统设置中关闭服务。</string>
+</resources>
