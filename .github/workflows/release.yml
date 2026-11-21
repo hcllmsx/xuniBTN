@@ -182,7 +182,9 @@ jobs:
           rclone --config "$config" copyto "out_put/$apk" "$RCLONE_TARGET/$apk"
           rclone --config "$config" copyto "out_put/$sha" "$RCLONE_TARGET/$sha"
           # 确认文件确实落到桶里，避免上传静默失败后仍发公告。
-          rclone --config "$config" stat "$RCLONE_TARGET/$apk"
+          # 注：新版 rclone 已移除 stat 子命令，用 lsl 检查单文件（不存在时报非零退出）。
+          rclone --config "$config" lsl "$RCLONE_TARGET/$apk"
+          rclone --config "$config" lsl "$RCLONE_TARGET/$sha"
           echo "Staged: $RCLONE_TARGET/$apk"
           echo "Staged: $RCLONE_TARGET/$sha"
 
