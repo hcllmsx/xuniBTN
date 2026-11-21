@@ -178,7 +178,9 @@ jobs:
           chmod 600 "$config"
           apk="xuniBTN-v${RELEASE_VERSION}.apk"
           sha="${apk}.sha256"
-          rclone --config "$config" copy "out_put/$apk" "out_put/$sha" "$RCLONE_TARGET/" --no-traverse
+          # rclone copy 只接受 source:path dest:path 两个位置参数，多个文件需逐个用 copyto 上传。
+          rclone --config "$config" copyto "out_put/$apk" "$RCLONE_TARGET/$apk"
+          rclone --config "$config" copyto "out_put/$sha" "$RCLONE_TARGET/$sha"
           # 确认文件确实落到桶里，避免上传静默失败后仍发公告。
           rclone --config "$config" stat "$RCLONE_TARGET/$apk"
           echo "Staged: $RCLONE_TARGET/$apk"
