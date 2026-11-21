@@ -6,7 +6,7 @@
 
 ## 下载与使用
 
-1. 从 [GitHub Releases](https://github.com/hcllmsx/xuniBTN/releases/latest) 下载并安装 APK。
+1. 扫描 [最新版本公告](https://github.com/hcllmsx/xuniBTN/releases/latest) 中的夸克网盘二维码下载并安装 APK。
 2. 打开虚拟按钮，点击「启用悬浮按钮」，阅读说明后前往系统无障碍设置，手动开启「虚拟按钮」服务。
 3. 返回应用确认实际显示状态，点击「回到桌面」，再打开需要操作的 TV 应用。设置页圆盘仅供预览，不发送按键。
 4. 拖动顶部手柄移动圆盘；圆盘下方可返回、收起或打开设置。收起的小泡泡可拖动，轻点恢复。

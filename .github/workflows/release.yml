@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -16,8 +16,6 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    permissions:
-      contents: write
     defaults:
       run:
         shell: bash
@@ -28,12 +26,14 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Validate tag and prepare release notes
+      # 校验 tag / VERSION / CHANGELOG，并生成网盘二维码公告正文。
+      # Release 本身不挂安装包：构建产物上传对象存储作中转，最终下载仍走网盘二维码。
+      - name: Validate tag and build announcement
         id: version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -60,12 +60,20 @@ jobs:
           notes = re.split(r'^## ', remainder, maxsplit=1, flags=re.MULTILINE)[0].strip()
           if not notes:
               raise SystemExit('The current changelog section is empty.')
-          temporary = root / '_temp'
-          temporary.mkdir(exist_ok=True)
-          body = ('### 更新内容\n\n' + notes + '\n\n---\n\n### 下载\n\n'
-                  + '请在下方 Assets 下载 `xuniBTN-v' + version + '.apk`（Android 13 及以上）。\n'
-                  + '同名 `.apk.sha256` 文件用于校验下载文件的 SHA256。\n')
-          (temporary / 'release_notes.txt').write_text(body, encoding='utf-8')
+
+          qr = 'https://raw.githubusercontent.com/hcllmsx/xuniBTN/main/docs/media/qr-quark-xunibtn.svg'
+          body = (
+              '### 更新内容\n\n'
+              + notes + '\n\n'
+              + '---\n\n'
+              + '### 下载方式请扫描以下二维码\n\n'
+              + '> 抱歉以网盘形式发布，希望这是暂时的。转存至网盘能为我带来一点微薄收益以维持项目更新，感谢理解。'
+                '指着这个吃饭是不够的，但每周能买一包泡面是可以的。万一如果有多的，那都用来充 TOKEN 啦。\n\n'
+              + '<p align="center">\n'
+              + '  <img src="' + qr + '" width="200" alt="夸克网盘下载二维码" />\n'
+              + '</p>\n'
+          )
+          (root / 'release_notes.txt').write_text(body, encoding='utf-8')
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
               output.write('version=' + version + '\n')
           PY
@@ -84,7 +92,6 @@ jobs:
           subprocess.run([str(manager), '--licenses'], input='y\n' * 100,
                          text=True, stdout=subprocess.DEVNULL, check=True)
           subprocess.run([str(manager), 'platforms;android-34', 'platform-tools'], check=True)
-          # AGP installs its required Build Tools using the accepted SDK licenses.
           PY
 
       - name: Restore private release keystore
@@ -149,19 +156,44 @@ jobs:
           subprocess.run(['sha256sum', '--check', apk + '.sha256'], check=True)
           PY
 
-      - name: Publish GitHub Release
+      # 构建产物上传到对象存储仅作中转：由作者本人取货后上传网盘，
+      # 终端用户始终从网盘二维码下载，因此 Release 不挂载任何安装包。
+      - name: Install rclone
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          rclone version
+
+      - name: Publish build to object storage (transfer staging)
+        env:
+          RCLONE_CONF_B64: ${{ secrets.RCLONE_CONF_B64 }}
+          RCLONE_TARGET: ${{ secrets.RCLONE_TARGET }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$RCLONE_CONF_B64" ] || [ -z "$RCLONE_TARGET" ]; then
+            echo "Secrets RCLONE_CONF_B64 and RCLONE_TARGET must be set."
+            exit 1
+          fi
+          config="$RUNNER_TEMP/rclone.conf"
+          printf '%s' "$RCLONE_CONF_B64" | base64 --decode > "$config"
+          chmod 600 "$config"
+          apk="xuniBTN-v${RELEASE_VERSION}.apk"
+          sha="${apk}.sha256"
+          rclone --config "$config" copy "out_put/$apk" "out_put/$sha" "$RCLONE_TARGET/" --no-traverse
+          # 确认文件确实落到桶里，避免上传静默失败后仍发公告。
+          rclone --config "$config" stat "$RCLONE_TARGET/$apk"
+          echo "Staged: $RCLONE_TARGET/$apk"
+          echo "Staged: $RCLONE_TARGET/$sha"
+
+      - name: Create GitHub Release (announcement only)
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: xuniBTN v${{ steps.version.outputs.version }}
-          body_path: _temp/release_notes.txt
+          body_path: release_notes.txt
           generate_release_notes: false
           draft: false
           prerelease: false
-          fail_on_unmatched_files: true
-          files: |
-            out_put/xuniBTN-v${{ steps.version.outputs.version }}.apk
-            out_put/xuniBTN-v${{ steps.version.outputs.version }}.apk.sha256
+          # 网盘二维码模式不配置 files:，Release 不挂载安装包。
 
       - name: Remove private signing material
         if: always()
@@ -170,3 +202,4 @@ jobs:
           import pathlib
           pathlib.Path('_temp/ci/release.jks').unlink(missing_ok=True)
           PY
+          rm -f "$RUNNER_TEMP/rclone.conf"
