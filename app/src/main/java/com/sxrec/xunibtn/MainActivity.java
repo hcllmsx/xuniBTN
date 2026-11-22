@@ -30,6 +30,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public final class MainActivity extends Activity implements UpdateChecker.Listener {
+    private static final String BILIBILI_URL = "https://space.bilibili.com/255947051";
     private SettingsStore settings;
     private UpdateChecker updateChecker;
     private String versionName;
@@ -237,15 +238,15 @@ public final class MainActivity extends Activity implements UpdateChecker.Listen
     private void buildAboutCard(LinearLayout parent) {
         LinearLayout card = card();
         card.addView(Ui.text(this, "关于 xuniBTN", 20, Ui.TEXT, true), matchWrap());
-        add(card, paragraph("作者：莫莫先生\n基于 GPL-3.0 协议开源\n感谢 Android 开源项目。"), 10);
+        add(card, paragraph("作者：莫莫先生\n基于 GPL-3.0 协议开源"), 10);
         add(card, button("查看开源仓库", false,
                 () -> openTrustedLink(UpdateChecker.REPOSITORY_URL)), 16);
+        add(card, button("B 站主页", false, () -> openTrustedLink(BILIBILI_URL)), 10);
         updateButton = button("检查更新", false, () -> {
             if (!updateChecker.check(true)) toast(UpdateChecker.FAILURE_MESSAGE);
             refreshUpdateButton();
         });
         add(card, updateButton, 10);
-        add(card, paragraph("每次进程启动静默检查一次。仅检查更新时联网，不收集使用数据。"), 12);
         add(parent, card, 16);
     }
 
@@ -445,7 +446,8 @@ public final class MainActivity extends Activity implements UpdateChecker.Listen
     }
 
     private void openTrustedLink(String url) {
-        if (!UpdateChecker.REPOSITORY_URL.equals(url) && !UpdateChecker.RELEASE_URL.equals(url)) return;
+        if (!UpdateChecker.REPOSITORY_URL.equals(url) && !UpdateChecker.RELEASE_URL.equals(url)
+                && !BILIBILI_URL.equals(url)) return;
         if (!launch(new Intent(Intent.ACTION_VIEW, Uri.parse(url)))) {
             toast("未找到可打开链接的应用，请访问 " + url);
         }

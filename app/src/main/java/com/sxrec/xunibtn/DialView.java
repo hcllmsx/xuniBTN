@@ -5,6 +5,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.HapticFeedbackConstants;
@@ -21,6 +22,9 @@ public final class DialView extends ViewGroup {
     private final SettingsStore settings;
     private final IntConsumer listener;
     private final KeyButton[] keys = new KeyButton[5];
+    private final Path segment = new Path();
+    private final RectF outerOval = new RectF();
+    private final RectF innerOval = new RectF();
 
     public DialView(Context context, SettingsStore settings, IntConsumer listener) {
         super(context);
@@ -81,6 +85,10 @@ public final class DialView extends ViewGroup {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(0xF0212A24);
         canvas.drawCircle(center, center, radius, paint);
+        paint.setColor(Ui.ACCENT);
+        for (int i = 0; i < 4; i++) {
+            if (keys[i].isPressed() || keys[i].isFocused()) drawSegment(canvas, center, radius, i);
+        }
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(Ui.dp(getContext(), 1));
         paint.setColor(0xFF536347);
@@ -94,6 +102,18 @@ public final class DialView extends ViewGroup {
                     center + (float) Math.sin(angle) * radius * .88f, paint);
         }
         paint.setStyle(Paint.Style.FILL);
+    }
+
+    private void drawSegment(Canvas canvas, float center, float radius, int direction) {
+        float inner = radius * .43f;
+        float start = 225 + 90 * direction;
+        outerOval.set(center - radius, center - radius, center + radius, center + radius);
+        innerOval.set(center - inner, center - inner, center + inner, center + inner);
+        segment.reset();
+        segment.arcTo(outerOval, start, 90);
+        segment.arcTo(innerOval, start + 90, -90);
+        segment.close();
+        canvas.drawPath(segment, paint);
     }
 
     private final class KeyButton extends Button {
@@ -136,6 +156,15 @@ public final class DialView extends ViewGroup {
         @Override public void setPressed(boolean pressed) {
             super.setPressed(pressed);
             invalidate();
+            View parent = (View) getParent();
+            if (parent != null) parent.invalidate();
+        }
+
+        @Override protected void onFocusChanged(boolean focused, int direction, android.graphics.Rect previouslyFocusedRect) {
+            super.onFocusChanged(focused, direction, previouslyFocusedRect);
+            invalidate();
+            View parent = (View) getParent();
+            if (parent != null) parent.invalidate();
         }
 
         @Override protected void onDraw(Canvas canvas) {
@@ -143,7 +172,7 @@ public final class DialView extends ViewGroup {
             float r = Math.min(cx, cy) - Ui.dp(getContext(), 2);
             boolean active = isPressed() || isFocused();
             keyPaint.setStyle(Paint.Style.FILL);
-            if (direction == 4 || active) {
+            if (direction == 4) {
                 keyPaint.setColor(active ? Ui.ACCENT : 0xFFD5E4B5);
                 canvas.drawCircle(cx, cy, r, keyPaint);
             }
